@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>导热计算</title>
+    <script src="vue.min.js"></script>
+    <link rel="stylesheet" href="./vue-beauty.min.css">
+    <script type="text/javascript" src="./vue-beauty.min.js"></script>
+</head>
+
+<body>
+<div id="app">
+    <v-row class="container" type="flex" justify="space-around">
+        <v-col span="12">
+            <v-row>
+                <v-card title="输入计算参数" :bordered="true" class="beauty-row">
+                    <v-row class="beauty-row">
+                        <v-input @blur="p_ta=$event">
+                            <p slot="before" class="beauty-p">环境温度ta</p>
+                            <p slot="after">&#8451;</p>
+                        </v-input>
+                    </v-row>
+                    <v-row class="beauty-row">
+                        <v-input @blur="p_t1=$event">
+                            <p slot="before" class="beauty-p">热面温度tb</p>
+                            <p slot="after">&#8451;</p>
+                        </v-input>
+                    </v-row>
+                    <v-row class="beauty-row">
+                        <v-input @blur="p_epsilon=$event">
+                            <p slot="before" class="beauty-p">炉壁外表辐射率&#949;</p>
+                        </v-input>
+                    </v-row>
+                    <v-row class="beauty-row">
+                        <v-select style="width: 100%" placeholder="散热方位" :data="direction_options" @input="p_A=$event"></v-select>
+                    </v-row>
+                    <v-row class="beauty-row">
+                        <v-row class="beauty-row">
+                            <v-button type="dashed" icon="plus" @click="modal_add_lambda">炉衬</v-button>
+                        </v-row>
+                        <template v-for="(lambda,i) in p_lambda">
+                            <v-row class="border beauty-row">
+                                <v-col span="5">{{lambda.material}}</v-col>
+                                <v-col span="10">&#923;={{lambda.lambda_a}}<span v-if="lambda.lambda_b"> + {{lambda.lambda_b}}*t</span><span v-if="lambda.lambda_c"> + {{lambda.lambda_c}}*t^2</span>
+                                </v-col>
+                                <v-col span="4">厚度:{{lambda.thickness}}m</v-col>
+                                <v-col span="5">
+                                    <v-button-group size="small" class="pull-right">
+                                        <v-button type="dashed" icon="edit" @click="edit_lambda(i)"></v-button>
+                                        <v-button type="dashed" icon="close" @click="remove_lambda(i)"></v-button>
+                                    </v-button-group>
+                                </v-col>
+                            </v-row>
+                        </template>
+                    </v-row>
+                </v-card>
+            </v-row>
+            <v-row type="flex" justify="space-around">
+                <v-col span="10">
+                    <v-button type="primary" icon="calculator" @click="result=[];start_calculation()" style="width: 100%">开始计算</v-button>
+                </v-col>
+                <v-col span="10">
+                    <v-button type="default" icon="delete" @click="result=[];statistics_result=null" style="width: 100%">清除计算结果</v-button>
+                </v-col>
+            </v-row>
+        </v-col>
+        <v-col span="10">
+
+            <v-card title="输出计算结果" :bordered="true" class="beauty-row">
+
+                <v-row class="beauty-row">
+                    <div class="ant-table ant-table-small">
+                        <div class="ant-table-content">
+                            <div class="ant-table-body">
+                                <table>
+                                    <thead class="ant-table-thead">
+                                    <tr>
+                                        <th>炉衬</th>
+                                        <th>热面温度&#8451;</th>
+                                        <th>冷面温度&#8451;</th>
+                                    </tr>
+                                    </thead>
+                                    <tbody class="ant-table-tbody">
+                                    <tr v-for="(layer, num) in result">
+                                        <td>第{{num + 1}}层</td>
+                                        <td>{{layer.t1}}</td>
+                                        <td>{{layer.t2}}</td>
+                                    </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </v-row>
+                <transition name="fade">
+                    <v-row v-if="statistics_result" class="beauty-row">
+                        <h3>结果汇总</h3>
+                        <p>散热量: {{statistics_result.q}}</p>
+                        <p>炉壁外表面温度计算: {{statistics_result.tb}}</p>
+                        <p>每平方米炉墙质量: {{statistics_result.quality}}</p>
+                    </v-row>
+                </transition>
+            </v-card>
+        </v-col>
+    </v-row>
+    <v-modal :title="modal_ctl.title" :visible="modal_ctl.visible" @cancel="modal_ctl.visible=false">
+        <v-form direction="horizontal" :model="customForm" :rules="customRules" ref="customRuleForm">
+            <v-form-item label="材料名称" :label-col="labelCol" :wrapper-col="wrapperCol" prop="material" :has-feedback="true">
+                <v-input type="text" size="large" v-model="customForm.material"></v-input>
+            </v-form-item>
+            <v-row style="margin-bottom: 5px; margin-top: 10px">
+                <v-col offset="6">导热系数 &#923;=<strong>A</strong> + <strong>B</strong>*t + <strong>C</strong>*t^2</v-col>
+            </v-row>
+
+            <v-form-item label="参数A" :label-col="labelCol" :wrapper-col="wrapperCol" prop="lambda_a" :has-feedback="true">
+                <v-input type="text" size="large" v-model="customForm.lambda_a"></v-input>
+            </v-form-item>
+
+            <v-form-item label="参数B" :label-col="labelCol" :wrapper-col="wrapperCol" prop="lambda_b" :has-feedback="true">
+                <v-input type="text" size="large" v-model="customForm.lambda_b"></v-input>
+            </v-form-item>
+
+            <v-form-item label="参数C" :label-col="labelCol" :wrapper-col="wrapperCol" prop="lambda_c" :has-feedback="true">
+                <v-input type="text" size="large" v-model="customForm.lambda_c"></v-input>
+            </v-form-item>
+
+            <v-form-item label="材料厚度M" :label-col="labelCol" :wrapper-col="wrapperCol" prop="thickness" :has-feedback="true">
+                <v-input type="text" size="large" v-model="customForm.thickness"></v-input>
+            </v-form-item>
+
+            <v-form-item label="材料密度" :label-col="labelCol" :wrapper-col="wrapperCol" prop="density" :has-feedback="true">
+                <v-input type="text" size="large" v-model="customForm.density"></v-input>
+            </v-form-item>
+        </v-form>
+        <template slot="footer">
+            <v-button size="large" @click="modal_ctl.visible=false">取消</v-button>
+            <v-button type="primary" size="large" @click="handleSubmit2">确定</v-button>
+        </template>
+    </v-modal>
+</div>
+<script>
+    function cuberoot(x) {
+        let y = Math.pow(Math.abs(x), 1 / 3);
+        return x < 0 ? -y : y;
+    }
+
+    function solveCubic(a, b, c, d) {
+        if (Math.abs(a) < 1e-8) { // Quadratic case, ax^2+bx+c=0
+            a = b;
+            b = c;
+            c = d;
+            if (Math.abs(a) < 1e-8) { // Linear case, ax+b=0
+                a = b;
+                b = c;
+                if (Math.abs(a) < 1e-8) // Degenerate case
+                    return [];
+                return [-b / a];
+            }
+
+            let D = b * b - 4 * a * c;
+            if (Math.abs(D) < 1e-8)
+                return [-b / (2 * a)];
+            else if (D > 0)
+                return [(-b + Math.sqrt(D)) / (2 * a), (-b - Math.sqrt(D)) / (2 * a)];
+            return [];
+        }
+
+        // Convert to depressed cubic t^3+pt+q = 0 (subst x = t - b/3a)
+        let p = (3 * a * c - b * b) / (3 * a * a);
+        let q = (2 * b * b * b - 9 * a * b * c + 27 * a * a * d) / (27 * a * a * a);
+        let roots;
+
+        if (Math.abs(p) < 1e-8) { // p = 0 -> t^3 = -q -> t = -q^1/3
+            roots = [cuberoot(-q)];
+        } else if (Math.abs(q) < 1e-8) { // q = 0 -> t^3 + pt = 0 -> t(t^2+p)=0
+            roots = [0].concat(p < 0 ? [Math.sqrt(-p), -Math.sqrt(-p)] : []);
+        } else {
+            let D = q * q / 4 + p * p * p / 27;
+            if (Math.abs(D) < 1e-8) {       // D = 0 -> two roots
+                roots = [-1.5 * q / p, 3 * q / p];
+            } else if (D > 0) {             // Only one real root
+                let u = cuberoot(-q / 2 - Math.sqrt(D));
+                roots = [u - p / (3 * u)];
+            } else {                        // D < 0, three roots, but needs to use complex numbers/trigonometric solution
+                let u = 2 * Math.sqrt(-p / 3);
+                let t = Math.acos(3 * q / p / u) / 3;  // D < 0 implies p < 0 and acos argument in [-1..1]
+                let k = 2 * Math.PI / 3;
+                roots = [u * Math.cos(t), u * Math.cos(t - k), u * Math.cos(t - 2 * k)];
+            }
+        }
+        // Convert back from depressed cubic
+        for (let i = 0; i < roots.length; i++)
+            roots[i] -= b / (3 * a);
+        return roots;
+    }
+    new Vue({
+        el: '#app',
+        data: {
+            p_ta: 0,
+            p_t1: 0,
+            p_epsilon: 0,
+            p_A: 0,
+            p_lambda: [],
+            modal_ctl: {
+                visible: false,
+                title: '',
+                action: '',
+                lambda_index: -1
+            },
+            direction_options: [
+                {label: '垂直', value: 2.2},
+                {label: '朝上', value: 2.8},
+                {label: '朝下', value: 1.4},
+            ],
+            customForm: {
+                material: '',
+                lambda_a: 0,
+                lambda_b: 0,
+                lambda_c: 0,
+                thickness: 0,
+                density: 0
+            },
+            customRules: {
+                material: [
+                    {required: true, message: '请输入材料名称'},
+                    {
+                        validator: (rule, value, callback) => {
+                            if (!value) callback(new Error('请输入材料名称'));
+                            callback();
+                        }
+                    }
+                ],
+                lambda_a: [{required: true, message: '请输入导热系数A'},
+                    {
+                        validator: (rule, value, callback) => {
+                            if (value === null) callback(new Error('请输入导热系数A'));
+                            if (!value.toString().match(/^[\d.\-e]+$/)) callback(new Error('请输入小数或科学计数法格式'));
+                            callback();
+                        }
+                    }
+                ],
+                lambda_b: [{required: true, message: '请输入导热系数B'},
+                    {
+                        validator: (rule, value, callback) => {
+                            if (value === null) callback(new Error('请输入导热系数B'));
+                            if (!value.toString().match(/^[\d.\-e]+$/)) callback(new Error('请输入数字或科学计数法格式'));
+                            callback();
+                        }
+                    }
+                ],
+                lambda_c: [{required: true, message: '请输入导热系数C'},
+                    {
+                        validator: (rule, value, callback) => {
+                            if (value === null) callback(new Error('请输入导热系数C'));
+                            if (!value.toString().match(/^[\d.\-e]+$/)) callback(new Error('请输入数字或科学计数法格式'));
+                            callback();
+                        }
+                    }
+                ],
+                thickness: [{required: true, message: '请输入材料厚度'},
+                    {
+                        validator: (rule, value, callback) => {
+                            if (value === null) callback(new Error('请输入材料厚度'));
+                            if (isNaN(Number.parseFloat(value))) callback(new Error('请输入数字或科学计数法格式'));
+                            if (Number.parseFloat(value) === 0) callback(new Error('厚度不能等于0'));
+                            callback();
+                        }
+                    }
+                ],
+                density: [{required: true, message: '请输入材料密度'},
+                    {
+                        validator: (rule, value, callback) => {
+                            if (value === null) callback(new Error('请输入材料密度'));
+                            if (isNaN(Number.parseFloat(value))) callback(new Error('请输入数字或科学计数法格式'));
+                            if (Number.parseFloat(value) === 0) callback(new Error('密度不能等于0'));
+                            callback();
+                        }
+                    }
+                ]
+            },
+            labelCol: {span: 6},
+            wrapperCol: {span: 14},
+            result: [],
+            statistics_result: null
+        },
+        methods: {
+            modal_add_lambda(){
+                this.modal_ctl.visible = true;
+                this.modal_ctl.title = '添加炉衬';
+                this.modal_ctl.action = 'a';
+                this.customForm = {
+                    material: '',
+                    lambda_a: 0,
+                    lambda_b: 0,
+                    lambda_c: 0,
+                    thickness: 0,
+                    density: 0
+                }
+            }
+            ,
+            edit_lambda(index){
+                this.modal_ctl.visible = true;
+                this.modal_ctl.title = '修改炉衬';
+                this.modal_ctl.action = 'e';
+                this.modal_ctl.lambda_index = index;
+                this.customForm = {
+                    material: this.p_lambda[index].material,
+                    lambda_a: this.p_lambda[index].lambda_a,
+                    lambda_b: this.p_lambda[index].lambda_b,
+                    lambda_c: this.p_lambda[index].lambda_c,
+                    thickness: this.p_lambda[index].thickness,
+                    density: this.p_lambda[index].density
+                }
+            },
+            remove_lambda(index){
+                this.p_lambda.splice(index, 1);
+            },
+            handleSubmit2(ev){
+                this.$refs.customRuleForm.validate(valid => {
+                    if (valid) {
+                        if (this.modal_ctl.action === 'a') {
+                            let temp_lambda = {};
+                            temp_lambda.material = this.customForm.material;
+                            temp_lambda.lambda_a = Number.parseFloat(this.customForm.lambda_a);
+                            temp_lambda.lambda_b = Number.parseFloat(this.customForm.lambda_b);
+                            temp_lambda.lambda_c = Number.parseFloat(this.customForm.lambda_c);
+                            temp_lambda.thickness = Number.parseFloat(this.customForm.thickness);
+                            temp_lambda.density = Number.parseFloat(this.customForm.density);
+                            this.p_lambda.push(temp_lambda);
+                        } else if (this.modal_ctl.action === 'e') {
+                            this.p_lambda[this.modal_ctl.lambda_index].material = this.customForm.material;
+                            this.p_lambda[this.modal_ctl.lambda_index].lambda_a = Number.parseFloat(this.customForm.lambda_a);
+                            this.p_lambda[this.modal_ctl.lambda_index].lambda_b = Number.parseFloat(this.customForm.lambda_b);
+                            this.p_lambda[this.modal_ctl.lambda_index].lambda_c = Number.parseFloat(this.customForm.lambda_c);
+                            this.p_lambda[this.modal_ctl.lambda_index].thickness = Number.parseFloat(this.customForm.thickness);
+                            this.p_lambda[this.modal_ctl.lambda_index].density = Number.parseFloat(this.customForm.density);
+                        }
+                        this.modal_ctl.visible = false;
+                        this.$forceUpdate()
+                    } else {
+                        console.log('error submit!!');
+                        return false
+                    }
+                });
+            },
+            start_calculation(){
+                try {
+                    let vm = this;
+                    let estimated_tb = Number.parseFloat(this.p_ta) + 1;
+                    this.recursive_convergence(estimated_tb, 10, (tb) => {
+                        let t1 = Number.parseFloat(vm.p_t1);
+                        for (let lambda of this.p_lambda) {
+                            let data = {t1: t1.toFixed(2)};
+                            t1 = this.cal_tb(tb, t1, lambda);
+                            data.t2 = t1.toFixed(2);
+                            vm.result.push(data)
+                        }
+                    });
+                    if (vm.result && vm.result.length > 0) {
+                        let ta = Number.parseFloat(vm.p_ta);
+                        let tb = Number.parseFloat(vm.result[vm.result.length - 1].t2);
+                        let alpha = vm.cal_alpha(tb, ta);
+                        let q = alpha * ( tb - ta);
+                        vm.statistics_result = {ta: ta.toFixed(2), tb: tb.toFixed(2), q: q.toFixed(2)}
+                    }
+                    let quality = 0;
+                    for (let lambda of this.p_lambda)
+                        quality += lambda.density * lambda.thickness;
+                    vm.statistics_result.quality = quality.toFixed(2);
+                } catch (e) {
+                    this.$message.error("计算失败");
+                }
+            },
+            recursive_convergence(estimated_tb, step_, callback){
+                let step = Number.parseFloat(step_);
+                let tb = Number.parseFloat(estimated_tb);
+                let t1 = this.p_t1;
+                for (let lambda of this.p_lambda)
+                    t1 = this.cal_tb(tb, t1, lambda)
+                let tb_ = t1;
+                if (tb_ > tb)
+                    this.recursive_convergence(tb + step, step, callback);
+                else if (tb - tb_ < 0.3)
+                    callback(tb);
+                else
+                    this.recursive_convergence(tb - step, step / 10, callback)
+            },
+            cal_distance(resArray, target){
+                let min = null;
+                for (let root of resArray) {
+                    if (min === null)
+                        min = root;
+                    else if (Math.abs(root - target) < Math.abs(min - target))
+                        min = root
+                }
+                if (min)
+                    return min;
+                else
+                    throw 'fail to calculate'
+            },
+            cal_tb(estimated_tb, t1_, lambda){
+                let tb = Number.parseFloat(estimated_tb);
+                let ta = Number.parseFloat(this.p_ta);
+                let t1 = Number.parseFloat(t1_);
+                let c = Number.parseFloat(lambda.lambda_c);
+                let b = Number.parseFloat(lambda.lambda_b);
+                let a = Number.parseFloat(lambda.lambda_a);
+                let s = Number.parseFloat(lambda.thickness);
+
+                let alpha = this.cal_alpha(tb, ta);
+                let cubic_a = c / (3 * s);
+                let cubic_b = b / (2 * s);
+                let cubic_c = a / s;
+                let cubic_d = alpha * (tb - ta) - a * t1 / s - b * t1 * t1 / (2 * s) - c * t1 * t1 * t1 / (3 * s);
+
+//                return Math.max(...solveCubic(cubic_a, cubic_b, cubic_c, cubic_d));
+                return this.cal_distance(solveCubic(cubic_a, cubic_b, cubic_c, cubic_d), tb)
+            },
+            cal_alpha (tb, ta){
+                let epsilon = Number.parseFloat(this.p_epsilon);
+                let A = Number.parseFloat(this.p_A);
+                return epsilon * 4.9 * ((Math.pow(((tb + 273) / 100), 4)) - (Math.pow(((ta + 273) / 100), 4))) / (tb - ta) + A * Math.pow((tb - ta), 1 / 4);
+            }
+        }
+    })
+</script>
+</body>
+<style>
+    .border {
+        border-bottom: 1px solid grey;
+    }
+
+    .container {
+        margin: 20px auto;
+        padding: 10px 10px;
+        width: 70%;
+    }
+
+    .beauty-row {
+        margin-bottom: 5px
+    }
+
+    .beauty-p {
+        width: 100px
+    }
+
+</style>
+
+</html>
